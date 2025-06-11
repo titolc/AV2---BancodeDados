@@ -5,7 +5,7 @@ Identificação da Equipe
 Nome do Projeto: Psiconnect
 
 Integrantes da Equipe:
-Augusto Junior - augusto.junior@edu.pe.senac.br
+Augusto Júnior - augusto.junior@edu.pe.senac.br
 Cesar Kauan - Cesar.silva@edu.pe.senac.br
 Christopher Lindoso - christopher.carvalho@edu.pe.senac.br
 Diogo Florentino - diogo.barbosa@edu.pe.senac.br
