@@ -1,0 +1,194 @@
+-- 02_Consultas_DQL.sql
+-- Este arquivo contém consultas SQL avançadas (DQL - Data Query Language)
+-- e as explicações detalhadas de cada uma, conforme solicitado.
+
+-- ######################################################################
+-- Consulta 01: Total de Consultas por Psicólogo e Valor Total Arrecadado
+-- ######################################################################
+
+-- Objetivo: Esta consulta visa fornecer uma visão geral do desempenho de cada psicólogo,
+--           mostrando o volume de atendimentos e o faturamento gerado.
+--           É útil para análises de produtividade e financeira.
+
+-- Tabelas e Colunas Utilizadas:
+--   - `psicologos` (colunas: `id_psicologo`, `nome`): Para identificar o psicólogo.
+--   - `consultas` (colunas: `id_psicologo`, `id_consulta`, `valor`): Para contar o número de consultas e somar o valor arrecadado.
+
+-- Exemplo de Resultado Esperado:
+-- | NomePsicologo   | TotalConsultas | ValorTotalArrecadado |
+-- |-----------------|----------------|----------------------|
+-- | João Silva      | 3              | 450.00               |
+-- | Diego Martins   | 3              | 570.00               |
+-- | ...             | ...            | ...                  |
+SELECT
+    p.nome AS NomePsicologo,
+    COUNT(c.id_consulta) AS TotalConsultas,
+    SUM(c.valor) AS ValorTotalArrecadado
+FROM
+    psicologos p
+JOIN
+    consultas c ON p.id_psicologo = c.id_psicologo
+GROUP BY
+    p.id_psicologo, p.nome
+ORDER BY
+    ValorTotalArrecadado DESC;
+
+-- ##################################################################################
+-- Consulta 02: Pacientes que agendaram mais consultas do que a média geral de agendamentos
+-- ##################################################################################
+
+-- Objetivo: Identificar pacientes com uma frequência de agendamento de consultas acima da média.
+--           Isso pode indicar pacientes mais engajados ou que necessitam de mais suporte,
+--           sendo útil para campanhas de fidelização ou acompanhamento.
+
+-- Tabelas e Colunas Utilizadas:
+--   - `pacientes` (colunas: `id_paciente`, `nome`): Para identificar o paciente.
+--   - `consultas` (colunas: `id_paciente`, `id_consulta`): Para contar as consultas de cada paciente.
+--   - A subconsulta calcula a média de consultas por paciente.
+
+-- Exemplo de Resultado Esperado:
+-- | NomePaciente    | NumeroDeConsultasAgendadas |
+-- |-----------------|----------------------------|
+-- | Ana Oliveira    | 3                          |
+-- | Carlos Ferreira | 3                          |
+-- | ...             | ...                        |
+SELECT
+    pa.nome AS NomePaciente,
+    COUNT(c.id_consulta) AS NumeroDeConsultasAgendadas
+FROM
+    pacientes pa
+JOIN
+    consultas c ON pa.id_paciente = c.id_paciente
+GROUP BY
+    pa.id_paciente, pa.nome
+HAVING
+    COUNT(c.id_consulta) > (SELECT AVG(ContagemConsultas) FROM (SELECT COUNT(id_consulta) AS ContagemConsultas FROM consultas GROUP BY id_paciente) AS SubConsultaMedia);
+
+
+-- ###############################################################################################################
+-- Consulta 03: Detalhes Completos das Consultas para Psicólogos com Valor de Consulta Acima da Média e Pacientes Estudantes
+-- ###############################################################################################################
+
+-- Objetivo: Obter um panorama detalhado das consultas realizadas por psicólogos com um valor de consulta mais elevado,
+--           mas que atenderam pacientes com benefício social 'ESTUDANTE'.
+--           Isso pode ser útil para entender o impacto do benefício social em diferentes perfis de psicólogos
+--           e para relatórios de impacto social.
+
+-- Tabelas e Colunas Utilizadas:
+--   - `consultas`: Principal tabela para detalhes da consulta.
+--   - `psicologos`: Para `NomePsicologo`, `ValorConsultaPsicologo`, e filtro por `valor_consulta > média`.
+--   - `pacientes`: Para `NomePaciente`, `BeneficioPaciente`, e filtro por `beneficio_social = 'ESTUDANTE'`.
+--   - `psicologos_especialidades`, `especialidades`, `psicologos_abordagens`, `abordagens`: Para listar as especialidades e abordagens do psicólogo.
+
+-- Exemplo de Resultado Esperado:
+-- | id_consulta | NomePsicologo | ValorConsultaPsicologo | NomePaciente    | BeneficioPaciente | data_consulta       | StatusConsulta | ModalidadeConsulta | TipoConsulta | ValorCobrado | EspecialidadesPsicologo                                                                   | AbordagensPsicologo                               |
+-- |-------------|---------------|------------------------|-----------------|-------------------|---------------------|----------------|--------------------|--------------|--------------|-------------------------------------------------------------------------------------------|---------------------------------------------------|
+-- | 13          | Fernanda Lima | 170.00                 | Carlos Ferreira | CADUNICO          | 2025-05-04 12:00:00 | CONCLUIDA      | REMOTA             | SOCIAL       | 50.00        | Depressão, Ansiedade, Luto, Insegurança, Sexualidade, Traumas, Relacionamento, Fobias | Terapia Cognitivo Comportamental (TCC), Terapia Sistêmica |
+-- | 22          | Fernanda Lima | 170.00                 | Bruno Santos    | NENHUM            | 2025-05-07 11:00:00 | CONCLUIDA      | REMOTA             | SOCIAL       | 50.00        | Depressão, Ansiedade, Luto, Insegurança, Sexualidade, Traumas, Relacionamento, Fobias | Terapia Cognitivo Comportamental (TCC), Terapia Sistêmica |
+-- | ...         | ...           | ...                    | ...             | ...               | ...                 | ...            | ...                | ...          | ...          | ...                                                                                       | ...                                               |
+SELECT
+    c.id_consulta,
+    p.nome AS NomePsicologo,
+    p.valor_consulta AS ValorConsultaPsicologo,
+    pa.nome AS NomePaciente,
+    pa.beneficio_social AS BeneficioPaciente,
+    c.data_consulta,
+    c.status AS StatusConsulta,
+    c.modalidade AS ModalidadeConsulta,
+    c.tipo AS TipoConsulta,
+    c.valor AS ValorCobrado,
+    GROUP_CONCAT(DISTINCT e.nome_especialidade SEPARATOR ', ') AS EspecialidadesPsicologo,
+    GROUP_CONCAT(DISTINCT a.nome_abordagem SEPARATOR ', ') AS AbordagensPsicologo
+FROM
+    consultas c
+JOIN
+    psicologos p ON c.id_psicologo = p.id_psicologo
+JOIN
+    pacientes pa ON c.id_paciente = pa.id_paciente
+LEFT JOIN
+    psicologos_especialidades pse ON p.id_psicologo = pse.id_psicologo
+LEFT JOIN
+    especialidades e ON pse.id_especialidade = e.id_especialidade
+LEFT JOIN
+    psicologos_abordagens psa ON p.id_psicologo = psa.id_psicologo
+LEFT JOIN
+    abordagens a ON psa.id_abordagem = a.id_abordagem
+WHERE
+    p.valor_consulta > (SELECT AVG(valor_consulta) FROM psicologos)
+    AND pa.beneficio_social = 'ESTUDANTE'
+GROUP BY
+    c.id_consulta, p.id_psicologo, pa.id_paciente
+ORDER BY
+    c.data_consulta DESC;
+
+-- ###############################################################
+-- Consulta 04: Psicólogos com Especialidades e Abordagens preferidas por Pacientes
+-- ###############################################################
+
+-- Objetivo: Identificar psicólogos que possuem especialidades e abordagens que coincidem com as preferências
+--           declaradas pelos pacientes. Essa consulta é valiosa para um sistema de matchmaking,
+--           auxiliando na recomendação de psicólogos para novos pacientes.
+
+-- Tabelas e Colunas Utilizadas:
+--   - `psicologos`: Para `NomePsicologo`.
+--   - `psicologos_especialidades`, `especialidades`, `preferencia_especialidades`: Para conectar psicólogos a especialidades e verificar se são preferências de pacientes.
+--   - `psicologos_abordagens`, `abordagens`, `preferencia_abordagens`: Para conectar psicólogos a abordagens e verificar se são preferências de pacientes.
+
+-- Exemplo de Resultado Esperado:
+-- | NomePsicologo   | EspecialidadesOferecidas                                                                | AbordagensOferecidas                                        |
+-- |-----------------|-----------------------------------------------------------------------------------------|-------------------------------------------------------------|
+-- | João Silva      | Depressão, Ansiedade, Luto, Insegurança, Sexualidade, Traumas, Relacionamento, Carreira | Terapia Cognitivo Comportamental (TCC), Psicanálise       |
+-- | Maria Souza     | Ansiedade, Luto, Insegurança, Sexualidade, Traumas, Relacionamento, Carreira, Fobias    | Psicologia Comportamental, Gestalt-terapia                 |
+-- | ...             | ...                                                                                     | ...                                                         |
+SELECT DISTINCT
+    p.nome AS NomePsicologo,
+    GROUP_CONCAT(DISTINCT e.nome_especialidade SEPARATOR ', ') AS EspecialidadesOferecidas,
+    GROUP_CONCAT(DISTINCT a.nome_abordagem SEPARATOR ', ') AS AbordagensOferecidas
+FROM
+    psicologos p
+JOIN
+    psicologos_especialidades pse ON p.id_psicologo = pse.id_psicologo
+JOIN
+    especialidades e ON pse.id_especialidade = e.id_especialidade
+JOIN
+    preferencia_especialidades pref_e ON e.id_especialidade = pref_e.id_especialidade
+JOIN
+    psicologos_abordagens psa ON p.id_psicologo = psa.id_psicologo
+JOIN
+    abordagens a ON psa.id_abordagem = a.id_abordagem
+JOIN
+    preferencia_abordagens pref_a ON a.id_abordagem = pref_a.id_abordagem
+GROUP BY
+    p.id_psicologo, p.nome
+ORDER BY
+    p.nome;
+
+-- ###############################################################
+-- Consulta 05: Pacientes que nunca agendaram uma consulta
+-- ###############################################################
+
+-- Objetivo: Encontrar pacientes que se cadastraram na plataforma, mas ainda não agendaram nenhuma consulta.
+--           Isso pode ser útil para equipes de marketing ou suporte entrarem em contato para oferecer ajuda ou incentivos.
+
+-- Tabelas e Colunas Utilizadas:
+--   - `pacientes`: Para obter os dados do paciente (`id_paciente`, `nome`, `email`).
+--   - `consultas`: Para verificar se há registros de consultas para o paciente.
+
+-- Exemplo de Resultado Esperado:
+-- | id_paciente | NomePaciente | Email                        |
+-- |-------------|--------------|------------------------------|
+-- | 16          | Luana Silva  | luana.silva@email.com        |
+-- | 17          | Pedro Rocha  | pedro.rocha@email.com        |
+-- | ...         | ...          | ...                          |
+SELECT
+    pa.id_paciente,
+    pa.nome AS NomePaciente,
+    pa.email
+FROM
+    pacientes pa
+LEFT JOIN
+    consultas c ON pa.id_paciente = c.id_paciente
+WHERE
+    c.id_consulta IS NULL
+ORDER BY
+    pa.nome;

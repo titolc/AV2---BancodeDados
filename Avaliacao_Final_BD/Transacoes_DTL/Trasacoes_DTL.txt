@@ -1,0 +1,227 @@
+-- 03_Transacoes_DTL.sql
+-- Este arquivo contém cenários de transação (DTL - Data Transaction Language)
+-- e as explicações detalhadas de cada um, conforme solicitado.
+
+-- ######################################################################
+-- Cenário 01: Agendamento de Nova Consulta
+-- ######################################################################
+
+-- Nome do Cenário: Agendamento de Nova Consulta.
+
+-- Fluxo de Negócio Passo a Passo:
+--   1. A transação é iniciada para garantir a atomicidade da operação.
+--   2. Primeiramente, verificamos a existência tanto do `id_paciente` quanto do `id_psicologo` fornecidos.
+--      Esta é uma validação crucial para garantir a integridade referencial antes de prosseguir.
+--   3. Se um dos IDs (paciente ou psicólogo) não for encontrado, a transação é revertida (`ROLLBACK`)
+--      e um erro é sinalizado, informando que o paciente ou psicólogo não existe.
+--      Isso impede a inserção de dados inconsistentes.
+--   4. Se ambos existirem, um `SAVEPOINT` é estabelecido antes da inserção da consulta.
+--      Embora o MySQL reverta a transação inteira em caso de falha de chave estrangeira,
+--      o `SAVEPOINT` é incluído para demonstrar um ponto de retorno parcial, caso houvesse
+--      outras operações que pudessem ser revertidas independentemente antes do erro crítico.
+--   5. A nova consulta é inserida na tabela `consultas` com o status inicial 'AGENDADA'.
+--   6. Se a inserção for bem-sucedida, a transação é confirmada (`COMMIT`),
+--      persistindo a nova consulta no banco de dados.
+
+-- Exemplo de Situação de Falha:
+--   - Falha total: Se for tentado agendar uma consulta com um `id_paciente` ou `id_psicologo` que não existe
+--     nas respectivas tabelas, a transação será revertida completamente (ROLLBACK),
+--     e uma mensagem de erro será exibida. A transação não prossegue, mantendo a integridade do sistema.
+--   - Rollback Parcial (ilustrativo): Embora a lógica principal do MySQL reverta toda a transação
+--     em caso de erro de integridade referencial na inserção, o `SAVEPOINT` serve como um marcador.
+--     Se tivéssemos múltiplas operações DML após o `SAVEPOINT` e apenas uma delas falhasse de forma controlável
+--     (ex: uma validação de dados específica com um `SIGNAL SQLSTATE` personalizado),
+--     poderíamos reverter apenas para o `SAVEPOINT`, mantendo as operações anteriores.
+--     No cenário atual, a principal falha é a ausência de IDs, que acionaria um `ROLLBACK` total.
+
+-- Explicação de SAVEPOINT e Rollback Parcial:
+--   - O `SAVEPOINT` `sp_antes_insercao` marca um ponto na transação.
+--     Se, hipoteticamente, uma operação subsequente (como a inserção da consulta,
+--     se a validação fosse mais complexa e não dependesse diretamente da FK) falhasse
+--     de maneira que permitisse recuperação parcial, poderíamos usar
+--     `ROLLBACK TO SAVEPOINT sp_antes_insercao;` para desfazer apenas as operações após esse ponto,
+--     sem reverter toda a transação. Neste caso, a validação de IDs antes do `SAVEPOINT` é crítica
+--     e a falha resulta em um `ROLLBACK` total.
+
+DELIMITER $$
+CREATE PROCEDURE AgendarNovaConsulta(
+    IN p_id_paciente INT,
+    IN p_id_psicologo INT,
+    IN p_data_consulta TIMESTAMP,
+    IN p_modalidade ENUM('REMOTA', 'PRESENCIAL'),
+    IN p_tipo ENUM('COMUM', 'SOCIAL'),
+    IN p_valor DECIMAL(10,2)
+)
+BEGIN
+    DECLARE paciente_existe INT DEFAULT 0;
+    DECLARE psicologo_existe INT DEFAULT 0;
+
+    START TRANSACTION;
+
+    SELECT COUNT(*) INTO paciente_existe FROM pacientes WHERE id_paciente = p_id_paciente;
+    SELECT COUNT(*) INTO psicologo_existe FROM psicologos WHERE id_psicologo = p_id_psicologo;
+
+    IF paciente_existe = 0 THEN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Erro: Paciente não encontrado.';
+    ELSEIF psicologo_existe = 0 THEN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Erro: Psicólogo não encontrado.';
+    ELSE
+        SAVEPOINT sp_antes_insercao;
+
+        INSERT INTO consultas (id_paciente, id_psicologo, data_consulta, status, modalidade, tipo, valor)
+        VALUES (p_id_paciente, p_id_psicologo, p_data_consulta, 'AGENDADA', p_modalidade, p_tipo, p_valor);
+
+        COMMIT;
+        SELECT 'Consulta agendada com sucesso!' AS Mensagem;
+    END IF;
+END$$
+DELIMITER ;
+
+-- Exemplo de uso e simulação de falha:
+-- CALL AgendarNovaConsulta(1, 1, '2025-06-15 14:00:00', 'REMOTE', 'COMMON', 150.00); -- Sucesso
+-- CALL AgendarNovaConsulta(999, 1, '2025-06-16 10:00:00', 'REMOTE', 'COMMON', 150.00); -- Falha: Paciente não encontrado
+-- CALL AgendarNovaConsulta(1, 999, '2025-06-16 11:00:00', 'REMOTE', 'COMMON', 150.00); -- Falha: Psicólogo não encontrado
+
+
+-- ######################################################################
+-- Cenário 02: Cancelamento de Consulta
+-- ######################################################################
+
+-- Nome do Cenário: Cancelamento de Consulta.
+
+-- Fluxo de Negócio Passo a Passo:
+--   1. A transação é iniciada para garantir que o cancelamento da consulta seja uma operação atômica.
+--   2. Primeiro, verifica-se se o `id_consulta` existe no banco de dados. Se não existir,
+--      a transação é revertida e um erro é sinalizado.
+--   3. Em seguida, o status atual da consulta é verificado.
+--   4. Se a consulta já estiver com status 'CONCLUIDA' ou 'CANCELADA', a transação é revertida (`ROLLBACK`)
+--      e um erro é sinalizado, pois não é permitido cancelar consultas que já finalizaram ou já foram canceladas.
+--   5. Se o status for 'AGENDADA', um `SAVEPOINT` é definido (`sp_antes_cancelamento`).
+--   6. O status da consulta é atualizado para 'CANCELADA'.
+--   7. Finalmente, a transação é confirmada (`COMMIT`).
+
+-- Exemplo de Situação de Falha:
+--   - Falha total: Se for tentado cancelar uma consulta que não existe, a transação é revertida,
+--     e uma mensagem de erro "Consulta não encontrada" é exibida.
+--   - Falha total: Se for tentado cancelar uma consulta que já está com status 'CONCLUIDA' ou 'CANCELADA',
+--     a transação é revertida, e uma mensagem de erro "Não é possível cancelar uma consulta já concluída ou cancelada." é exibida.
+--   - Rollback Parcial (ilustrativo): O `SAVEPOINT` `sp_antes_cancelamento` é usado para demonstrar um ponto de reversão.
+--     Se, após a atualização do status, houvesse uma operação de log ou notificação que falhasse,
+--     poderíamos usar `ROLLBACK TO SAVEPOINT sp_antes_cancelamento;` para reverter apenas essa operação específica,
+--     mantendo o status da consulta atualizado para 'CANCELADA' (se essa fosse a intenção,
+--     ou reverter tudo dependendo da criticidade da falha).
+--     No cenário atual, as falhas resultam em `ROLLBACK` total devido à natureza crítica da validação de status.
+
+DELIMITER $$
+CREATE PROCEDURE CancelarConsulta(
+    IN p_id_consulta INT
+)
+BEGIN
+    DECLARE current_status ENUM('AGENDADA', 'CONCLUIDA', 'CANCELADA');
+    DECLARE consulta_existe INT DEFAULT 0;
+
+    START TRANSACTION;
+
+    SELECT COUNT(*) INTO consulta_existe FROM consultas WHERE id_consulta = p_id_consulta;
+
+    IF consulta_existe = 0 THEN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Erro: Consulta não encontrada.';
+    END IF;
+
+    SELECT status INTO current_status FROM consultas WHERE id_consulta = p_id_consulta;
+
+    IF current_status IN ('CONCLUIDA', 'CANCELADA') THEN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Erro: Não é possível cancelar uma consulta já concluída ou cancelada.';
+    ELSE
+        SAVEPOINT sp_antes_cancelamento;
+
+        UPDATE consultas
+        SET status = 'CANCELADA'
+        WHERE id_consulta = p_id_consulta;
+
+        COMMIT;
+        SELECT 'Consulta cancelada com sucesso!' AS Mensagem;
+    END IF;
+END$$
+DELIMITER ;
+
+-- Exemplo de uso e simulação de falha:
+-- CALL CancelarConsulta(4); -- Sucesso (Consulta 4 está CANCELADA, mas a lógica permite o cancelamento, idealmente deveria ser AGENDADA)
+-- CALL CancelarConsulta(1); -- Falha (Consulta 1 está CONCLUIDA)
+-- CALL CancelarConsulta(999); -- Falha: Consulta não encontrada
+
+
+-- ######################################################################
+-- Cenário 03: Avaliação de Consulta
+-- ######################################################################
+
+-- Nome do Cenário: Avaliação de Consulta.
+
+-- Fluxo de Negócio Passo a Passo:
+--   1. A transação é iniciada para garantir a consistência na inserção da avaliação.
+--   2. Primeiramente, verifica-se se a `id_consulta` já possui uma avaliação na tabela `avaliacoes`.
+--      Se sim, a transação é revertida e um erro é sinalizado, garantindo que uma consulta não seja avaliada múltiplas vezes.
+--   3. Opcionalmente, uma verificação é feita para garantir que a consulta que está sendo avaliada
+--      já tenha o status 'CONCLUIDA'. Isso impede avaliações de consultas que ainda não ocorreram ou foram canceladas.
+--      Se a consulta não estiver concluída, a transação é revertida e um erro é sinalizado.
+--   4. Um `SAVEPOINT` é estabelecido antes da inserção da avaliação (`sp_antes_avaliacao`).
+--   5. A nova avaliação (com `nota` e `comentario`) é inserida na tabela `avaliacoes`.
+--   6. A transação é confirmada (`COMMIT`), persistindo a nova avaliação no banco de dados.
+
+-- Exemplo de Situação de Falha:
+--   - Falha total: Se for tentado avaliar uma consulta que já possui uma avaliação,
+--     a transação é revertida, e uma mensagem de erro "Esta consulta já foi avaliada." é exibida.
+--   - Falha total: Se for tentado avaliar uma consulta que ainda não está com status 'CONCLUIDA',
+--     a transação é revertida, e uma mensagem de erro "A consulta deve estar CONCLUIDA para ser avaliada." é exibida.
+--   - Rollback Parcial (ilustrativo): O `SAVEPOINT` `sp_antes_avaliacao` demonstra um ponto de reversão.
+--     Se houvesse outras operações DML após a inserção da avaliação (como um UPDATE no registro da consulta
+--     para marcar que ela foi avaliada, e essa atualização falhasse), poderíamos usar
+--     `ROLLBACK TO SAVEPOINT sp_antes_avaliacao;` para desfazer apenas essa atualização,
+--     mantendo a avaliação inserida. No cenário atual, as falhas são críticas e resultam em `ROLLBACK` total.
+
+DELIMITER $$
+CREATE PROCEDURE AvaliarConsulta(
+    IN p_id_consulta INT,
+    IN p_id_paciente INT,
+    IN p_id_psicologo INT,
+    IN p_nota INT,
+    IN p_comentario TEXT
+)
+BEGIN
+    DECLARE avaliacao_existente INT DEFAULT 0;
+    DECLARE consulta_concluida INT DEFAULT 0;
+
+    START TRANSACTION;
+
+    SELECT COUNT(*) INTO avaliacao_existente FROM avaliacoes WHERE id_consulta = p_id_consulta;
+
+    IF avaliacao_existente > 0 THEN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Erro: Esta consulta já foi avaliada.';
+    END IF;
+
+    SELECT COUNT(*) INTO consulta_concluida FROM consultas WHERE id_consulta = p_id_consulta AND status = 'CONCLUIDA';
+
+    IF consulta_concluida = 0 THEN
+        ROLLBACK;
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Erro: A consulta deve estar CONCLUIDA para ser avaliada.';
+    END IF;
+
+    SAVEPOINT sp_antes_avaliacao;
+
+    INSERT INTO avaliacoes (id_consulta, id_paciente, id_psicologo, nota, comentario)
+    VALUES (p_id_consulta, p_id_paciente, p_id_psicologo, p_nota, p_comentario);
+
+    COMMIT;
+    SELECT 'Avaliação registrada com sucesso!' AS Mensagem;
+END$$
+DELIMITER ;
+
+-- Exemplo de uso e simulação de falha:
+-- CALL AvaliarConsulta(2, 2, 2, 5, 'Atendimento excelente!'); -- Sucesso (se a consulta 2 não tiver avaliação e estiver concluída)
+-- CALL AvaliarConsulta(1, 1, 1, 4, 'Avaliação atualizada.'); -- Falha (Consulta 1 já avaliada pelos dados de exemplo)
+-- CALL AvaliarConsulta(6, 6, 6, 3, 'Consulta pendente.'); -- Falha: Consulta não CONCLUIDA
