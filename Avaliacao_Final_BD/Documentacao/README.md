@@ -6,11 +6,11 @@ Nome do Projeto: Psiconnect
 
 Integrantes da Equipe:
 Augusto Junior - augusto.junior@edu.pe.senac.br
-Cesar Kauan - [Matrícula/Email]
+Cesar Kauan - Cesar.silva@edu.pe.senac.br
 Christopher Lindoso - christopher.carvalho@edu.pe.senac.br
 Diogo Florentino - diogo.barbosa@edu.pe.senac.br
-Guilherme Pereira - [Matrícula/Email]
-Lívia Vergete - [Matrícula/Email]
+Guilherme Pereira - Guilherme.silva@edu.pe.senac.br
+Lívia Vergete - livia.marques@edu.pe.senac.br
 
 Visão Geral do Banco de Dados
 
